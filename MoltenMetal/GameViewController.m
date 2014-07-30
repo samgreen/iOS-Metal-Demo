@@ -8,10 +8,9 @@
 @import QuartzCore.CAMetalLayer;
 
 // The max number of command buffers in flight
-static const NSUInteger g_max_inflight_buffers = 3;
-
+static const NSUInteger MAX_CONCURRENT_COMMAND_BUFFERS = 3;
 // Max API memory buffer size.
-static const size_t MAX_BYTES_PER_FRAME = 1024*1024;
+static const size_t MAX_BYTES_PER_FRAME = 1024 * 1024;
 
 float cubeVertexData[216] = {
     // Data layout for each line below is:
@@ -104,11 +103,13 @@ typedef struct
     [super viewDidLoad];
     
     _constantDataBufferIndex = 0;
-    _inflight_semaphore = dispatch_semaphore_create(g_max_inflight_buffers);
+    // Create a semaphore to ensure thread safety for the GPU
+    _inflight_semaphore = dispatch_semaphore_create(MAX_CONCURRENT_COMMAND_BUFFERS);
     
     [self setupMetal];
     [self loadAssets];
     
+    // Create a timer synchronized to the screen's refresh rate
     _timer = [CADisplayLink displayLinkWithTarget:self selector:@selector(gameloop)];
     [_timer addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
 }
@@ -143,7 +144,6 @@ typedef struct
     // Add metal layer to the views layer hierarchy
     _metalLayer.frame = self.view.layer.frame;
     [self.view.layer addSublayer:_metalLayer];
-    
     self.view.contentScaleFactor = [UIScreen mainScreen].scale;
 }
 
@@ -158,7 +158,9 @@ typedef struct
     id <MTLFunction> vertexProgram = [_defaultLibrary newFunctionWithName:@"lighting_vertex"];
     
     // Setup the vertex buffers
-    _vertexBuffer = [_device newBufferWithBytes:cubeVertexData length:sizeof(cubeVertexData) options:MTLResourceOptionCPUCacheModeDefault];
+    _vertexBuffer = [_device newBufferWithBytes:cubeVertexData
+                                         length:sizeof(cubeVertexData)
+                                        options:MTLResourceOptionCPUCacheModeDefault];
     _vertexBuffer.label = @"Vertices";
     
     // Create a reusable pipeline state
@@ -182,7 +184,8 @@ typedef struct
     _depthState = [_device newDepthStencilStateWithDescriptor:depthStateDesc];
 }
 
-- (void)setupRenderPassDescriptorForTexture:(id <MTLTexture>) texture {
+- (void)setupRenderPassDescriptorForTexture:(id <MTLTexture>)texture {
+    // Lazily load the render pass descriptor
     if (_renderPassDescriptor == nil)
         _renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
     
@@ -191,12 +194,18 @@ typedef struct
     _renderPassDescriptor.colorAttachments[0].clearColor = MTLClearColorMake(0.65f, 0.65f, 0.65f, 1.0f);
     _renderPassDescriptor.colorAttachments[0].storeAction = MTLStoreActionStore;
     
-    if (!_depthTex || (_depthTex && (_depthTex.width != texture.width || _depthTex.height != texture.height)))
-    {
-        //  If we need a depth texture and don't have one, or if the depth texture we have is the wrong size
-        //  Then allocate one of the proper size
-        MTLTextureDescriptor *desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat: MTLPixelFormatDepth32Float width: texture.width height: texture.height mipmapped: NO];
-        _depthTex = [_device newTextureWithDescriptor: desc];
+    [self setupDepthAttachmentForTexture:texture];
+}
+
+- (void)setupDepthAttachmentForTexture:(id <MTLTexture>)texture {
+    //  If we need a depth texture and don't have one, or if the depth texture we have is the wrong size
+    //  Then allocate one of the proper size
+    if (!_depthTex || (_depthTex && (_depthTex.width != texture.width || _depthTex.height != texture.height))) {
+        MTLTextureDescriptor *desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatDepth32Float
+                                                                                        width:texture.width
+                                                                                       height:texture.height
+                                                                                    mipmapped:NO];
+        _depthTex = [_device newTextureWithDescriptor:desc];
         _depthTex.label = @"Depth";
         
         _renderPassDescriptor.depthAttachment.texture = _depthTex;
@@ -226,15 +235,18 @@ typedef struct
     
     // Set context state
     [renderEncoder pushDebugGroup:@"DrawCube"];
+    // Set up pipeline state
     [renderEncoder setRenderPipelineState:_pipelineState];
-    [renderEncoder setVertexBuffer:_vertexBuffer offset:0 atIndex:0 ];
+    
+    // Add the vertices to be passed on to the vertex shader
+    [renderEncoder setVertexBuffer:_vertexBuffer offset:0 atIndex:0];
     [renderEncoder setVertexBuffer:_dynamicConstantBuffer offset:(sizeof(uniforms_t) * _constantDataBufferIndex) atIndex:1 ];
     
-    // Tell the render context we want to draw our primitives
+    // Draw out primitives
     [renderEncoder drawPrimitives:MTLPrimitiveTypeTriangle vertexStart:0 vertexCount:36 instanceCount:1];
     [renderEncoder popDebugGroup];
     
-    // We're done encoding commands
+    // We're done. It's invalid to issue any more commands after we've ended encoding
     [renderEncoder endEncoding];
     
     // Call the view's completion handler which is required by the view since it will signal its semaphore and set up the next buffer
@@ -244,17 +256,16 @@ typedef struct
     }];
     
     // The renderview assumes it can now increment the buffer index and that the previous index won't be touched until we cycle back around to the same index
-    _constantDataBufferIndex = (_constantDataBufferIndex + 1) % g_max_inflight_buffers;
+    _constantDataBufferIndex = (_constantDataBufferIndex + 1) % MAX_CONCURRENT_COMMAND_BUFFERS;
     
     // Schedule a present once the framebuffer is complete
     [commandBuffer presentDrawable:drawable];
-    
     // Finalize rendering here & push the command buffer to the GPU
     [commandBuffer commit];
 }
 
 - (void)reshape {
-    // When reshape is called, update the view and projection matricies since this means the view orientation or size changed
+    // Update the view and projection matricies due to the view orientation or size changing
     float aspect = fabsf(self.view.bounds.size.width / self.view.bounds.size.height);
     _projectionMatrix = GLKMatrix4MakePerspective(65.f * (M_PI / 180.f), aspect, 0.1f, 100.f);
     _viewMatrix = GLKMatrix4Identity;
@@ -274,14 +285,14 @@ typedef struct
     uint8_t *bufferPointer = (uint8_t *)[_dynamicConstantBuffer contents] + (sizeof(uniforms_t) * _constantDataBufferIndex);
     memcpy(bufferPointer, &_uniform_buffer, sizeof(uniforms_t));
     
+    // Increment the rotation
     _rotation += 0.01f;
 }
 
 // The main game loop called by the CADisplayLink timer
 - (void)gameloop {
     @autoreleasepool {
-        if (_layerSizeDidUpdate)
-        {
+        if (_layerSizeDidUpdate) {
             CGSize drawableSize = self.view.bounds.size;
             drawableSize.width *= self.view.contentScaleFactor;
             drawableSize.height *= self.view.contentScaleFactor;
