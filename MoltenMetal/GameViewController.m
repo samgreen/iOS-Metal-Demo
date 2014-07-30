@@ -2,6 +2,7 @@
 
 #import "GameViewController.h"
 
+@import GLKit;
 @import Metal;
 @import simd;
 @import QuartzCore.CAMetalLayer;
@@ -61,8 +62,8 @@ float cubeVertexData[216] =
 
 typedef struct
 {
-    matrix_float4x4 modelview_projection_matrix;
-    matrix_float4x4 normal_matrix;
+    GLKMatrix4 modelview_projection_matrix;
+    GLKMatrix4 normal_matrix;
 } uniforms_t;
 
 @implementation GameViewController
@@ -91,8 +92,8 @@ typedef struct
     id <MTLTexture> _msaaTex;
     
     // uniforms
-    matrix_float4x4 _projectionMatrix;
-    matrix_float4x4 _viewMatrix;
+    GLKMatrix4 _projectionMatrix;
+    GLKMatrix4 _viewMatrix;
     uniforms_t _uniform_buffer;
     float _rotation;
 }
@@ -265,19 +266,19 @@ typedef struct
 {
     // When reshape is called, update the view and projection matricies since this means the view orientation or size changed
     float aspect = fabsf(self.view.bounds.size.width / self.view.bounds.size.height);
-    _projectionMatrix = matrix_from_perspective_fov_aspectLH(65.0f * (M_PI / 180.0f), aspect, 0.1f, 100.0f);
-    
-    _viewMatrix = matrix_identity_float4x4;
+    _projectionMatrix = GLKMatrix4MakePerspective(65.f * (M_PI / 180.f), aspect, 0.1f, 100.f);
+    _viewMatrix = GLKMatrix4Identity;
 }
 
 - (void)_update
 {
-    matrix_float4x4 base_model = matrix_multiply(matrix_from_translation(0.0f, 0.0f, 5.0f), matrix_from_rotation(_rotation, 0.0f, 1.0f, 0.0f));
-    matrix_float4x4 base_mv = matrix_multiply(_viewMatrix, base_model);
-    matrix_float4x4 modelViewMatrix = matrix_multiply(base_mv, matrix_from_rotation(_rotation, 1.0f, 1.0f, 1.0f));
+    GLKMatrix4 base_model = GLKMatrix4Multiply(GLKMatrix4MakeTranslation(0, 0, 5), GLKMatrix4MakeRotation(_rotation, 0, 1, 0));
+    GLKMatrix4 base_mv = GLKMatrix4Multiply(_viewMatrix, base_model);
+    GLKMatrix4 modelViewMatrix = GLKMatrix4Multiply(base_mv, GLKMatrix4MakeRotation(_rotation, 1, 1, 1));
     
-    _uniform_buffer.normal_matrix = matrix_invert(matrix_transpose(modelViewMatrix));
-    _uniform_buffer.modelview_projection_matrix = matrix_multiply(_projectionMatrix, modelViewMatrix);
+
+    _uniform_buffer.normal_matrix = GLKMatrix4Invert(GLKMatrix4Transpose(modelViewMatrix), NULL);
+    _uniform_buffer.modelview_projection_matrix = GLKMatrix4Multiply(_projectionMatrix, modelViewMatrix);
     
     // Load constant buffer data into appropriate buffer at current index
     uint8_t *bufferPointer = (uint8_t *)[_dynamicConstantBuffer contents] + (sizeof(uniforms_t) * _constantDataBufferIndex);
@@ -316,7 +317,6 @@ typedef struct
 }
 
 #pragma mark Utilities
-
 - (id <CAMetalDrawable>)currentDrawable
 {
     while (_currentDrawable == nil)
@@ -330,63 +330,4 @@ typedef struct
     
     return _currentDrawable;
 }
-
-static matrix_float4x4 matrix_from_perspective_fov_aspectLH(const float fovY, const float aspect, const float nearZ, const float farZ)
-{
-    float yscale = 1.0f / tanf(fovY * 0.5f); // 1 / tan == cot
-    float xscale = yscale / aspect;
-    float q = farZ / (farZ - nearZ);
-    
-    matrix_float4x4 m = {
-        .columns[0] = { xscale, 0.0f, 0.0f, 0.0f },
-        .columns[1] = { 0.0f, yscale, 0.0f, 0.0f },
-        .columns[2] = { 0.0f, 0.0f, q, 1.0f },
-        .columns[3] = { 0.0f, 0.0f, q * -nearZ, 0.0f }
-    };
-    
-    return m;
-}
-
-static matrix_float4x4 matrix_from_translation(float x, float y, float z)
-{
-    matrix_float4x4 m = matrix_identity_float4x4;
-    m.columns[3] = (vector_float4) { x, y, z, 1.0 };
-    return m;
-}
-
-static matrix_float4x4 matrix_from_rotation(float radians, float x, float y, float z)
-{
-    vector_float3 v = vector_normalize(((vector_float3){x, y, z}));
-    float cos = cosf(radians);
-    float cosp = 1.0f - cos;
-    float sin = sinf(radians);
-    
-    matrix_float4x4 m = {
-        .columns[0] = {
-            cos + cosp * v.x * v.x,
-            cosp * v.x * v.y + v.z * sin,
-            cosp * v.x * v.z - v.y * sin,
-            0.0f,
-        },
-        
-        .columns[1] = {
-            cosp * v.x * v.y - v.z * sin,
-            cos + cosp * v.y * v.y,
-            cosp * v.y * v.z + v.x * sin,
-            0.0f,
-        },
-        
-        .columns[2] = {
-            cosp * v.x * v.z + v.y * sin,
-            cosp * v.y * v.z - v.x * sin,
-            cos + cosp * v.z * v.z,
-            0.0f,
-        },
-        
-        .columns[3] = { 0.0f, 0.0f, 0.0f, 1.0f
-        }
-    };
-    return m;
-}
-
 @end
