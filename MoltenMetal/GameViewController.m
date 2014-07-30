@@ -13,8 +13,7 @@ static const NSUInteger g_max_inflight_buffers = 3;
 // Max API memory buffer size.
 static const size_t MAX_BYTES_PER_FRAME = 1024*1024;
 
-float cubeVertexData[216] =
-{
+float cubeVertexData[216] = {
     // Data layout for each line below is:
     // positionX, positionY, positionZ,     normalX, normalY, normalZ,
     0.5, -0.5, 0.5,   0.0, -1.0,  0.0,
@@ -66,8 +65,7 @@ typedef struct
     GLKMatrix4 normal_matrix;
 } uniforms_t;
 
-@implementation GameViewController
-{
+@implementation GameViewController {
     // layer
     CAMetalLayer *_metalLayer;
     id <CAMetalDrawable> _currentDrawable;
@@ -98,24 +96,21 @@ typedef struct
     float _rotation;
 }
 
-- (void)dealloc
-{
+- (void)dealloc {
     [_timer invalidate];
 }
 
-- (void)viewDidLoad
-{
+- (void)viewDidLoad {
     [super viewDidLoad];
     
     _constantDataBufferIndex = 0;
     _inflight_semaphore = dispatch_semaphore_create(g_max_inflight_buffers);
     
-    [self _setupMetal];
-    [self _loadAssets];
+    [self setupMetal];
+    [self loadAssets];
     
-    _timer = [CADisplayLink displayLinkWithTarget:self selector:@selector(_gameloop)];
+    _timer = [CADisplayLink displayLinkWithTarget:self selector:@selector(gameloop)];
     [_timer addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];
-    
 }
 
 - (BOOL)prefersStatusBarHidden {
@@ -127,7 +122,7 @@ typedef struct
     // Dispose of any resources that can be recreated.
 }
 
-- (void)_setupMetal {
+- (void)setupMetal {
     // Find a usable device
     _device = MTLCreateSystemDefaultDevice();
     
@@ -152,8 +147,7 @@ typedef struct
     self.view.contentScaleFactor = [UIScreen mainScreen].scale;
 }
 
-- (void)_loadAssets
-{
+- (void)loadAssets {
     // Allocate one region of memory for the uniform (for shaders) buffer
     _dynamicConstantBuffer = [_device newBufferWithLength:MAX_BYTES_PER_FRAME options:0];
     _dynamicConstantBuffer.label = @"UniformBuffer";
@@ -188,8 +182,7 @@ typedef struct
     _depthState = [_device newDepthStencilStateWithDescriptor:depthStateDesc];
 }
 
-- (void)setupRenderPassDescriptorForTexture:(id <MTLTexture>) texture
-{
+- (void)setupRenderPassDescriptorForTexture:(id <MTLTexture>) texture {
     if (_renderPassDescriptor == nil)
         _renderPassDescriptor = [MTLRenderPassDescriptor renderPassDescriptor];
     
@@ -213,8 +206,7 @@ typedef struct
     }
 }
 
-- (void)render
-{
+- (void)render {
     dispatch_semaphore_wait(_inflight_semaphore, DISPATCH_TIME_FOREVER);
     
     [self update];
