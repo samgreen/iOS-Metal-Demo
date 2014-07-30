@@ -127,8 +127,7 @@ typedef struct
     // Dispose of any resources that can be recreated.
 }
 
-- (void)_setupMetal
-{
+- (void)_setupMetal {
     // Find a usable device
     _device = MTLCreateSystemDefaultDevice();
     
@@ -147,24 +146,21 @@ typedef struct
     _metalLayer.framebufferOnly = YES;
     
     // Add metal layer to the views layer hierarchy
-    [_metalLayer setFrame:self.view.layer.frame];
+    _metalLayer.frame = self.view.layer.frame;
     [self.view.layer addSublayer:_metalLayer];
     
-    self.view.opaque = YES;
-    self.view.backgroundColor = nil;
     self.view.contentScaleFactor = [UIScreen mainScreen].scale;
 }
 
 - (void)_loadAssets
 {
-    // Allocate one region of memory for the uniform buffer
+    // Allocate one region of memory for the uniform (for shaders) buffer
     _dynamicConstantBuffer = [_device newBufferWithLength:MAX_BYTES_PER_FRAME options:0];
     _dynamicConstantBuffer.label = @"UniformBuffer";
     
-    // Load the fragment program into the library
+    // Load the fragment shader from the library
     id <MTLFunction> fragmentProgram = [_defaultLibrary newFunctionWithName:@"lighting_fragment"];
-    
-    // Load the vertex program into the library
+    // Load the vertex shader from the library
     id <MTLFunction> vertexProgram = [_defaultLibrary newFunctionWithName:@"lighting_vertex"];
     
     // Setup the vertex buffers
@@ -174,13 +170,13 @@ typedef struct
     // Create a reusable pipeline state
     MTLRenderPipelineDescriptor *pipelineStateDescriptor = [[MTLRenderPipelineDescriptor alloc] init];
     pipelineStateDescriptor.label = @"MyPipeline";
-    [pipelineStateDescriptor setSampleCount: 1];
-    [pipelineStateDescriptor setVertexFunction:vertexProgram];
-    [pipelineStateDescriptor setFragmentFunction:fragmentProgram];
+    pipelineStateDescriptor.sampleCount = 1;
+    pipelineStateDescriptor.vertexFunction = vertexProgram;
+    pipelineStateDescriptor.fragmentFunction = fragmentProgram;
     pipelineStateDescriptor.colorAttachments[0].pixelFormat = MTLPixelFormatBGRA8Unorm;
     pipelineStateDescriptor.depthAttachmentPixelFormat = MTLPixelFormatDepth32Float;
     
-    NSError* error = NULL;
+    NSError *error = NULL;
     _pipelineState = [_device newRenderPipelineStateWithDescriptor:pipelineStateDescriptor error:&error];
     if (!_pipelineState) {
         NSLog(@"Failed to created pipeline state, error %@", error);
@@ -206,8 +202,7 @@ typedef struct
     {
         //  If we need a depth texture and don't have one, or if the depth texture we have is the wrong size
         //  Then allocate one of the proper size
-        
-        MTLTextureDescriptor* desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat: MTLPixelFormatDepth32Float width: texture.width height: texture.height mipmapped: NO];
+        MTLTextureDescriptor *desc = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat: MTLPixelFormatDepth32Float width: texture.width height: texture.height mipmapped: NO];
         _depthTex = [_device newTextureWithDescriptor: desc];
         _depthTex.label = @"Depth";
         
@@ -218,11 +213,11 @@ typedef struct
     }
 }
 
-- (void)_render
+- (void)render
 {
     dispatch_semaphore_wait(_inflight_semaphore, DISPATCH_TIME_FOREVER);
     
-    [self _update];
+    [self update];
     
     // Create a new command buffer for each renderpass to the current drawable
     id <MTLCommandBuffer> commandBuffer = [_commandQueue commandBuffer];
@@ -266,21 +261,20 @@ typedef struct
     [commandBuffer commit];
 }
 
-- (void)_reshape
-{
+- (void)reshape {
     // When reshape is called, update the view and projection matricies since this means the view orientation or size changed
     float aspect = fabsf(self.view.bounds.size.width / self.view.bounds.size.height);
     _projectionMatrix = GLKMatrix4MakePerspective(65.f * (M_PI / 180.f), aspect, 0.1f, 100.f);
     _viewMatrix = GLKMatrix4Identity;
 }
 
-- (void)_update
-{
+- (void)update {
+    // Update our matrices
     GLKMatrix4 base_model = GLKMatrix4Multiply(GLKMatrix4MakeTranslation(0, 0, 5), GLKMatrix4MakeRotation(_rotation, 0, 1, 0));
     GLKMatrix4 base_mv = GLKMatrix4Multiply(_viewMatrix, base_model);
     GLKMatrix4 modelViewMatrix = GLKMatrix4Multiply(base_mv, GLKMatrix4MakeRotation(_rotation, 1, 1, 1));
     
-
+    // Update the uniforms before passing them on to the shader
     _uniform_buffer.normal_matrix = GLKMatrix4Invert(GLKMatrix4Transpose(modelViewMatrix), NULL);
     _uniform_buffer.modelview_projection_matrix = GLKMatrix4Multiply(_projectionMatrix, modelViewMatrix);
     
@@ -291,9 +285,8 @@ typedef struct
     _rotation += 0.01f;
 }
 
-// The main game loop called by the CADisplayLine timer
-- (void)_gameloop
-{
+// The main game loop called by the CADisplayLink timer
+- (void)gameloop {
     @autoreleasepool {
         if (_layerSizeDidUpdate)
         {
@@ -302,36 +295,31 @@ typedef struct
             drawableSize.height *= self.view.contentScaleFactor;
             _metalLayer.drawableSize = drawableSize;
             
-            [self _reshape];
+            [self reshape];
             _layerSizeDidUpdate = NO;
         }
         
         // draw
-        [self _render];
-        
+        [self render];
         _currentDrawable = nil;
     }
 }
 
 // Called whenever view changes orientation or layout is changed
-- (void)viewDidLayoutSubviews
-{
+- (void)viewDidLayoutSubviews {
     _layerSizeDidUpdate = YES;
-    [_metalLayer setFrame:self.view.layer.frame];
+    _metalLayer.frame = self.view.layer.frame;
 }
 
 #pragma mark Utilities
-- (id <CAMetalDrawable>)currentDrawable
-{
-    while (_currentDrawable == nil)
-    {
+- (id <CAMetalDrawable>)currentDrawable {
+    // Keep synchronously asking the layer for a new drawable
+    while (_currentDrawable == nil) {
         _currentDrawable = [_metalLayer nextDrawable];
-        if (!_currentDrawable)
-        {
-            NSLog(@"CurrentDrawable is nil");
+        if (!_currentDrawable) {
+            NSLog(@"[WARNING] CurrentDrawable is nil");
         }
     }
-    
     return _currentDrawable;
 }
 @end
